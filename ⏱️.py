@@ -2,10 +2,12 @@ import rumps
 import datetime
 import json
 import os
+from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
 
 class Stopwatch(rumps.App):
     def __init__(self):
         super(Stopwatch, self).__init__("⏱️")
+        NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         self.start_time = None
         self.stopwatch_active = False
         self.config_file = os.path.expanduser('~/.stopwatch_state.json')
