@@ -2,7 +2,7 @@ import rumps
 import datetime
 import json
 import os
-from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+from AppKit import NSApplication, NSApplicationActivationPolicyAccessory, NSFont, NSAttributedString, NSDictionary
 
 class Stopwatch(rumps.App):
     def __init__(self):
@@ -42,7 +42,7 @@ class Stopwatch(rumps.App):
         else:
             self.start_time = None
             self.stopwatch_active = False
-            self.title = "⏱️"
+            self.set_monospace_title("⏱️")
         self.save_state()
 
     def format_time(self, seconds):
@@ -55,6 +55,16 @@ class Stopwatch(rumps.App):
         else:
             return f"{minutes:02d}:{secs:02d}"
 
+    def set_monospace_title(self, title_text):
+        # monstrosity
+        if hasattr(self._nsapp, 'nsstatusitem'):
+            font = NSFont.monospacedSystemFontOfSize_weight_(14, 0.0)
+            attributes = NSDictionary.dictionaryWithObject_forKey_(font, "NSFont")
+            attributed_title = NSAttributedString.alloc().initWithString_attributes_(
+                title_text, attributes
+            )
+            self._nsapp.nsstatusitem.setAttributedTitle_(attributed_title)
+
     def start_stopwatch_thread(self):
         @rumps.timer(1)
         def update_stopwatch(_):
@@ -66,10 +76,11 @@ class Stopwatch(rumps.App):
                 if diff.days > 0:
                     self.start_time = None
                     self.stopwatch_active = False
-                    self.title = "⏱️"
+                    self.set_monospace_title("⏱️")
                     self.save_state()
                 else:
-                    self.title = self.format_time(total_seconds)
+                    formatted_time = self.format_time(total_seconds)
+                    self.set_monospace_title(formatted_time)
 
 if __name__ == "__main__":
     Stopwatch().run()
