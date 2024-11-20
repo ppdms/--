@@ -201,6 +201,7 @@ class DatePickerWindowController(NSObject):
 
     def showWindow(self):
         self.window.center()
+        self.window.setLevel_(3)
         self.window.makeKeyAndOrderFront_(None)
 
     @objc.IBAction
