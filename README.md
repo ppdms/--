@@ -3,6 +3,6 @@
 
 # Building
 ```sh
-pip install rumps pyinstaller
+pip install rumps python-dateutil pyinstaller 
 pyinstaller ⏱️.spec
 ```
