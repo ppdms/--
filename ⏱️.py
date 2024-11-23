@@ -15,7 +15,6 @@ class Stopwatch(rumps.App):
     def __init__(self):
         super(Stopwatch, self).__init__("⏱️")
         NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-        self.mode = None
         self.stopwatch_epoch = None
         self.target_date = None
         self.config_file = os.path.expanduser('~/.stopwatch_state.json')
@@ -25,24 +24,26 @@ class Stopwatch(rumps.App):
         self.day_progress_enabled = None
         self.stopwatch_enabled = None
         self.date_comparison_enabled = None
+        self.days_only_date_comparison = None
+        self.YMD_date_comparison = None
         self.load_state()
         self.menu.add(rumps.MenuItem('Disable Day Progress' if self.day_progress_enabled else 'Enable Day Progress', callback=self.toggle_day_progress))
         self.menu.add(rumps.MenuItem('Disable Stopwatch' if self.stopwatch_enabled else 'Enable Stopwatch', callback=self.toggle_stopwatch))
         self.menu.add(rumps.MenuItem('Disable Date Comparison' if self.date_comparison_enabled else 'Enable Date Comparison', callback=self.toggle_date_comparison))
+        self.menu.add(rumps.MenuItem('Toggle Date Comparison Format (D)' if self.days_only_date_comparison else ('Toggle Date Comparison Format (YMD)' if self.YMD_date_comparison else 'Toggle Date Comparison (YMDHMS)'), callback=self.toggle_date_comparison_format))
         rumps.Timer(self.update_display, 1).start()
 
     def load_state(self):
-        try:
-            if os.path.exists(self.config_file):
-                with open(self.config_file, 'r') as f:
-                    data = json.load(f)
-                    self.date_comparison_enabled = data.get('date_comparison_enabled')
-                    self.day_progress_enabled = data.get('day_progress_enabled')
-                    self.stopwatch_enabled = data.get('stopwatch_enabled')
-                    self.stopwatch_epoch = datetime.datetime.fromisoformat(data.get('stopwatch_epoch'))
-                    self.target_date = datetime.datetime.fromisoformat(data.get('target_date'))      
-        except Exception:
-            pass
+        if os.path.exists(self.config_file):
+            with open(self.config_file, 'r') as f:
+                data = json.load(f)
+                self.date_comparison_enabled = data.get('date_comparison_enabled')
+                self.day_progress_enabled = data.get('day_progress_enabled')
+                self.stopwatch_enabled = data.get('stopwatch_enabled')
+                self.stopwatch_epoch = datetime.datetime.fromisoformat(data.get('stopwatch_epoch')) if data.get('stopwatch_epoch') else None
+                self.target_date = datetime.datetime.fromisoformat(data.get('target_date')) if data.get('target_date') else None
+                self.days_only_date_comparison = data.get('days_only_date_comparison') 
+                self.YMD_date_comparison = data.get('YMD_date_comparison')
     
     def save_state(self):
         data = {
@@ -50,7 +51,9 @@ class Stopwatch(rumps.App):
             'day_progress_enabled': self.day_progress_enabled,
             'stopwatch_enabled': self.stopwatch_enabled,
             'stopwatch_epoch': self.stopwatch_epoch.isoformat() if self.stopwatch_epoch else None,
-            'target_date': self.target_date.isoformat() if self.target_date else None
+            'target_date': self.target_date.isoformat() if self.target_date else None,
+            'days_only_date_comparison': self.days_only_date_comparison,
+            'YMD_date_comparison': self.YMD_date_comparison
         }
         with open(self.config_file, 'w') as f:
             json.dump(data, f)
@@ -58,7 +61,6 @@ class Stopwatch(rumps.App):
     def toggle_stopwatch(self, sender):
         if self.stopwatch_enabled:
             self.stopwatch_enabled = False
-            self.mode = None
             self.stopwatch_epoch = None
             sender.title = "Enable Stopwatch"
         else:
@@ -70,26 +72,35 @@ class Stopwatch(rumps.App):
     def toggle_day_progress(self, sender):
         if self.day_progress_enabled:
             self.day_progress_enabled = False
-            self.mode = None
             sender.title = 'Enable Day Progress'
         else:
             self.day_progress_enabled = True
-            self.mode = 'day_progress'
             sender.title = 'Disable Day Progress'
         self.save_state()
 
     def toggle_date_comparison(self, sender):
         if self.date_comparison_enabled:
             self.date_comparison_enabled = False
-            self.mode = None
             sender.title = 'Enable Date Comparison'
         else:
             self.date_comparison_enabled = True
-            self.mode = 'date_comparison'
             sender.title = 'Disable Date Comparison'
             if self.date_selector_window is None:
                 self.date_selector_window = DatePickerWindowController.alloc().initWithCallback_(self.handle_date_set)
             self.date_selector_window.showWindow()
+        self.save_state()
+    
+    def toggle_date_comparison_format(self, sender):
+        if self.days_only_date_comparison:
+            self.days_only_date_comparison = False
+            self.YMD_date_comparison = True
+            sender.title = 'Toggle Date Comparison Format (YMD)'
+        elif self.YMD_date_comparison:
+            self.YMD_date_comparison = False
+            sender.title = 'Toggle Date Comparison Format (YMDHMS)'
+        else:
+            self.days_only_date_comparison = True
+            sender.title = 'Toggle Date Comparison Format (D)'
         self.save_state()
 
     def set_monospace_title(self, title_text):
@@ -145,11 +156,15 @@ class Stopwatch(rumps.App):
                     self.save_state()
                 rd = relativedelta(self.target_date, datetime.datetime.now())
                 duration = ""
-                if rd.years: duration += f"{abs(rd.years)}Y "
-                if rd.months: duration += f"{abs(rd.months)}M "
-                if rd.days: duration += f"{abs(rd.days)}D"
-                duration += f" {abs(rd.hours):02}:{abs(rd.minutes):02}:{abs(rd.seconds):02}"
-                MenuText += duration if MenuText == "" else f" | {duration}"
+                if self.days_only_date_comparison:
+                    duration += str((datetime.datetime.now() - self.target_date).days) + "D"
+                else:
+                    if rd.years: duration += f"{abs(rd.years)}Y "
+                    if rd.months: duration += f"{abs(rd.months)}M "
+                    if rd.days: duration += f"{abs(rd.days)}D"
+                    if self.YMD_date_comparison == False:
+                        duration += f" {abs(rd.hours):02}:{abs(rd.minutes):02}:{abs(rd.seconds):02}"
+                MenuText += "" if duration == "" else (duration if MenuText == "" else f" | {duration}")
 
         self.set_monospace_title(MenuText)
 
@@ -177,7 +192,7 @@ class DatePickerWindowController(NSObject):
             NSBackingStoreBuffered,
             False
         )
-        self.window.setTitle_("Set Target Time")
+        self.window.setTitle_("Set Target Date")
         self.window.center()
         
         date_picker = NSDatePicker.alloc().initWithFrame_(NSMakeRect(25, 70, 300, 150))
