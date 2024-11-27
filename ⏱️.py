@@ -10,6 +10,9 @@ from AppKit import (NSWindow, NSTitledWindowMask, NSBackingStoreBuffered,
     NSFont, NSAttributedString, NSDictionary, NSDate, NSMakeRect, NSDatePicker,
     NSButton, NSObject, NSBezelStyleRounded
 )
+import requests
+import subprocess
+from typing import Optional
 
 class Stopwatch(rumps.App):
     def __init__(self):
@@ -26,11 +29,19 @@ class Stopwatch(rumps.App):
         self.date_comparison_enabled = None
         self.days_only_date_comparison = None
         self.YMD_date_comparison = None
+        self.bus_status_enabled = False
+        self.last_bus_check = None
+        self.bus_check_interval = 30
+        self.year_progress_enabled = False
         self.load_state()
-        self.menu.add(rumps.MenuItem('Disable Day Progress' if self.day_progress_enabled else 'Enable Day Progress', callback=self.toggle_day_progress))
+        
         self.menu.add(rumps.MenuItem('Disable Stopwatch' if self.stopwatch_enabled else 'Enable Stopwatch', callback=self.toggle_stopwatch))
         self.menu.add(rumps.MenuItem('Disable Date Comparison' if self.date_comparison_enabled else 'Enable Date Comparison', callback=self.toggle_date_comparison))
+        self.menu.add(rumps.MenuItem('Disable Day Progress' if self.day_progress_enabled else 'Enable Day Progress', callback=self.toggle_day_progress))
+        self.menu.add(rumps.MenuItem('Disable Year Progress' if self.year_progress_enabled else 'Enable Year Progress', callback=self.toggle_year_progress))
+        self.menu.add(rumps.MenuItem('Disable Bus Status' if self.bus_status_enabled else 'Enable Bus Status', callback=self.toggle_bus_status))
         self.menu.add(rumps.MenuItem('Toggle Date Comparison Format (D)' if self.days_only_date_comparison else ('Toggle Date Comparison Format (YMD)' if self.YMD_date_comparison else 'Toggle Date Comparison (YMDHMS)'), callback=self.toggle_date_comparison_format))
+        
         rumps.Timer(self.update_display, 1).start()
 
     def load_state(self):
@@ -44,6 +55,8 @@ class Stopwatch(rumps.App):
                 self.target_date = datetime.datetime.fromisoformat(data.get('target_date')) if data.get('target_date') else None
                 self.days_only_date_comparison = data.get('days_only_date_comparison') 
                 self.YMD_date_comparison = data.get('YMD_date_comparison')
+                self.year_progress_enabled = data.get('year_progress_enabled')
+                self.bus_status_enabled = data.get('bus_status_enabled')
     
     def save_state(self):
         data = {
@@ -53,7 +66,9 @@ class Stopwatch(rumps.App):
             'stopwatch_epoch': self.stopwatch_epoch.isoformat() if self.stopwatch_epoch else None,
             'target_date': self.target_date.isoformat() if self.target_date else None,
             'days_only_date_comparison': self.days_only_date_comparison,
-            'YMD_date_comparison': self.YMD_date_comparison
+            'YMD_date_comparison': self.YMD_date_comparison,
+            'year_progress_enabled': self.year_progress_enabled,
+            'bus_status_enabled': self.bus_status_enabled
         }
         with open(self.config_file, 'w') as f:
             json.dump(data, f)
@@ -113,41 +128,30 @@ class Stopwatch(rumps.App):
             self._nsapp.nsstatusitem.setAttributedTitle_(attributed_title)
 
     def update_display(self, _=None):
-        MenuText = "⏱️" if not (self.day_progress_enabled or self.stopwatch_enabled or self.date_comparison_enabled) else ""
+        MenuText = "⏱️" if not (self.day_progress_enabled or self.stopwatch_enabled or self.date_comparison_enabled or self.bus_status_enabled or self.year_progress_enabled) else ""
 
-        if self.day_progress_enabled:
-            now = datetime.datetime.now()
-            seconds = 3600 * now.hour + 60 * now.minute + now.second
-            if seconds >= 22 * 60 * 60 or seconds < 6 * 60 * 60:
-                MenuText += "😴" if MenuText == "" else " | 😴"
-            else:
-                percentage = (100 * (seconds - 6 * 60 * 60)) / (16 * 60 * 60)
-                MenuText += f"{percentage:.2f}%" if MenuText == "" else f" | {percentage:.2f}%"
         if self.stopwatch_enabled:
             if self.stopwatch_epoch:
                 diff = datetime.datetime.now() - self.stopwatch_epoch
                 total_seconds = diff.seconds
                 
-                # If more than 24 hours have passed, reset the stopwatch
                 if (diff.days > 0):
                     self.stopwatch_epoch = None
                     self.stopwatch_enabled = None
-                    self.save_state()
                 else:
                     hours = total_seconds // 3600
                     minutes = (total_seconds % 3600) // 60
                     secs = total_seconds % 60
 
                     if hours > 0:
-                        formatted_time = f"{hours:02d}:{minutes:02d}:{secs:02d}"
+                        formatted_time = f"⏱️ {hours:02d}:{minutes:02d}:{secs:02d}"
                     else:
-                        formatted_time = f"{minutes:02d}:{secs:02d}"
+                        formatted_time = f"⏱️ {minutes:02d}:{secs:02d}"
                     
-                    MenuText += formatted_time if MenuText == "" else f" | {formatted_time}"
+                    MenuText += formatted_time
             else:
                 self.stopwatch_epoch = None
                 self.stopwatch_enabled = None
-                self.save_state()
 
         if self.date_comparison_enabled:
             if self.target_date:
@@ -157,20 +161,83 @@ class Stopwatch(rumps.App):
                 rd = relativedelta(self.target_date, datetime.datetime.now())
                 duration = ""
                 if self.days_only_date_comparison:
-                    duration += str((datetime.datetime.now() - self.target_date).days) + "D"
+                    duration += str(abs((datetime.datetime.now() - self.target_date).days)) + "D"
                 else:
                     if rd.years: duration += f"{abs(rd.years)}Y "
                     if rd.months: duration += f"{abs(rd.months)}M "
                     if rd.days: duration += f"{abs(rd.days)}D"
                     if self.YMD_date_comparison == False:
-                        duration += f" {abs(rd.hours):02}:{abs(rd.minutes):02}:{abs(rd.seconds):02}"
-                MenuText += "" if duration == "" else (duration if MenuText == "" else f" | {duration}")
+                        duration += f" {abs(rd.hours):02}:{abs(rd.minutes):02}:{abs(rd.seconds):02}" if duration else f"{abs(rd.hours):02}:{abs(rd.minutes):02}:{abs(rd.seconds):02}"
+                MenuText += "" if duration == "" else (f"🎯 {duration}" if MenuText == "" else f" | 🎯 {duration}")
 
+
+        if self.day_progress_enabled:
+            now = datetime.datetime.now()
+            seconds = 3600 * now.hour + 60 * now.minute + now.second
+            if seconds >= 22 * 60 * 60 or seconds < 6 * 60 * 60:
+                MenuText += "😴" if MenuText == "" else " | 😴"
+            else:
+                percentage = (100 * (seconds - 6 * 60 * 60)) / (16 * 60 * 60)
+                MenuText += f"⏳ {percentage:.2f}%" if MenuText == "" else f" | ⏳ {percentage:.2f}%"
+        
+        if self.year_progress_enabled:
+            now = datetime.datetime.now()
+            start_of_year = datetime.datetime(now.year, 1, 1)
+            end_of_year = datetime.datetime(now.year + 1, 1, 1)
+            
+            progress = (now - start_of_year) / (end_of_year - start_of_year)
+            percentage = progress * 100
+
+            MenuText += f" | 📅 {percentage:.1f}%" if MenuText else "📅 {percentage:.1f}%"
+
+        
+        if self.bus_status_enabled and self.last_bus_check:
+            MenuText += f" | 🚌 {self.last_bus_check}" if MenuText else f"🚌 {self.last_bus_check}"
+
+        self.save_state()
         self.set_monospace_title(MenuText)
 
     @objc.python_method
     def handle_date_set(self, date):
         self.target_date = date
+
+    @objc.python_method
+    def fetch_bus_time(self) -> Optional[str]:
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            response = requests.get(
+                'http://telematics.oasa.gr/api/?act=getStopArrivals&p1=380042',
+                headers=headers
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if data and len(data) > 0:
+                    return data[0]['btime2']
+            return None
+        except Exception:
+            return None
+
+    @rumps.timer(30)
+    def update_bus_time(self, _):
+        if self.bus_status_enabled:
+            self.last_bus_check = self.fetch_bus_time()
+
+    def toggle_bus_status(self, sender):
+        self.bus_status_enabled = not self.bus_status_enabled
+        if self.bus_status_enabled:
+            self.update_bus_time(None)
+            sender.title = 'Disable Bus Status'
+        else:
+            sender.title = 'Enable Bus Status'
+
+    def toggle_year_progress(self, sender):
+        self.year_progress_enabled = not self.year_progress_enabled
+        if self.year_progress_enabled:
+            sender.title = 'Disable Year Progress'
+        else:
+            sender.title = 'Enable Year Progress'
 
 class DatePickerWindowController(NSObject):
     window = objc.ivar('window')
